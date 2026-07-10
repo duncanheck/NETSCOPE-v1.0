@@ -51,9 +51,9 @@
     "updater": {
       "active": true,
       "endpoints": [
-        "https://github.com/duncanheck/NETSCOPE/releases/download/desktop-latest/latest.json"
+        "https://github.com/duncanheck/NETSCOPE-v1.0/releases/download/desktop-latest/latest.json"
       ],
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEUyMjdEMTkwRTE2REUxOTEKUldTUjRXM2hrTkVuNG9LRldLRDNKL0V3MWVwSWRIMVA4b0xrS1dML0ZtWmFac2YxN2tQVzhZVzAK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDhBRTJFM0MwMzVEOTcwClJXUncyVFhBNCtLS0FQTHRkR0h6aHJRQm5hYzN1c3NaYkRhU0lqRDI2SjMwcGQrT0Jmb0FKK0RxCg==",
       "windows": {
         "installMode": "quiet"
       }

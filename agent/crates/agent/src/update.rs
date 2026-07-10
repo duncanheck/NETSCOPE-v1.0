@@ -44,7 +44,7 @@ use sha2::{Digest, Sha256};
 /// The rolling manifest the updater reads. Overridable at runtime with
 /// `NETSCOPE_UPDATE_MANIFEST_URL` (forks / testing).
 const DEFAULT_MANIFEST_URL: &str =
-    "https://github.com/duncanheck/NETSCOPE/releases/download/latest/latest.json";
+    "https://github.com/duncanheck/NETSCOPE-v1.0/releases/download/latest/latest.json";
 
 /// This build's identity, stamped by `build.rs`.
 #[derive(Debug, Clone, Serialize)]

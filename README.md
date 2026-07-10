@@ -3,9 +3,9 @@
 *A live, beautiful map of where your machine is actually talking — built on a
 rigorous systems core.*
 
-[![CI](https://github.com/duncanheck/NETSCOPEv1/actions/workflows/ci.yml/badge.svg)](https://github.com/duncanheck/NETSCOPEv1/actions/workflows/ci.yml)
-[![Desktop build (Tauri)](https://github.com/duncanheck/NETSCOPEv1/actions/workflows/desktop-build.yml/badge.svg)](https://github.com/duncanheck/NETSCOPEv1/actions/workflows/desktop-build.yml)
-[![Windows build](https://github.com/duncanheck/NETSCOPEv1/actions/workflows/windows-build.yml/badge.svg)](https://github.com/duncanheck/NETSCOPEv1/actions/workflows/windows-build.yml)
+[![CI](https://github.com/duncanheck/NETSCOPE-v1.0/actions/workflows/ci.yml/badge.svg)](https://github.com/duncanheck/NETSCOPE-v1.0/actions/workflows/ci.yml)
+[![Desktop build (Tauri)](https://github.com/duncanheck/NETSCOPE-v1.0/actions/workflows/desktop-build.yml/badge.svg)](https://github.com/duncanheck/NETSCOPE-v1.0/actions/workflows/desktop-build.yml)
+[![Windows build](https://github.com/duncanheck/NETSCOPE-v1.0/actions/workflows/windows-build.yml/badge.svg)](https://github.com/duncanheck/NETSCOPE-v1.0/actions/workflows/windows-build.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 <!--

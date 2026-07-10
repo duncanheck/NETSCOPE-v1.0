@@ -17,7 +17,7 @@
 
 [Unit]
 Description=NETSCOPE firewall enforcer (privilege-separated)
-Documentation=https://github.com/duncanheck/NETSCOPE
+Documentation=https://github.com/duncanheck/NETSCOPE-v1.0
 After=network.target
 
 [Service]
