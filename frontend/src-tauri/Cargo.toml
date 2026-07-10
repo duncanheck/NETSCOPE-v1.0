@@ -1,0 +1,29 @@
+# The NETSCOPE desktop shell — a thin Tauri wrapper that turns the web UI into a
+# native app window. It bundles the capture agent as a sidecar and serves the
+# already-built React/Three.js frontend from `../dist`; the UI talks to the agent
+# over the same WebSocket the browser build uses (VITE_AGENT_URL=ws://127.0.0.1:8787).
+#
+# This is a standalone crate, deliberately NOT part of the `agent/` workspace: it
+# pulls in Tauri/webview system deps (webkit2gtk on Linux, WebView2 on Windows) that
+# the headless agent build must stay free of.
+[package]
+name = "netscope-desktop"
+version = "0.1.0"
+edition = "2021"
+description = "NETSCOPE desktop shell (Tauri)"
+license = "MIT"
+publish = false
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-shell = "2"
+# Auto-update (fluid, Chrome/Slack-style): checks a signed manifest and
+# downloads/installs silently in the background; restarting into the new
+# build is a plain `AppHandle::request_restart()` (tauri core, no plugin
+# needed for that half).
+tauri-plugin-updater = "2"
+serde_json = "1"
+tokio = { version = "1", features = ["time"] }

@@ -1,0 +1,6 @@
+{
+  "identifier": "default",
+  "description": "Baseline capabilities for the NETSCOPE desktop window. The UI talks to the agent over plain WebSocket/fetch, not Tauri IPC, so it needs only the core defaults — the agent sidecar is spawned from Rust, which is unrestricted.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

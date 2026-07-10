@@ -1,0 +1,41 @@
+# Rust / Cargo
+/agent/target/
+**/*.rs.bk
+Cargo.lock.orig
+
+# Node / frontend
+node_modules/
+frontend/dist/
+frontend/.vite/
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Editor / OS
+.DS_Store
+.vscode/
+.idea/
+*.swp
+
+# Local data / secrets — never commit
+/geoip/
+*.mmdb
+/threatfeeds/
+.env
+.env.local
+*.token
+
+# Tauri build output (added during Windows desktop-shell work)
+/agent/gen/
+
+# Tauri desktop shell: build output, generated schemas, and the bundled agent
+# sidecar (produced by CI, never committed). Icons and config ARE committed.
+frontend/src-tauri/target/
+frontend/src-tauri/gen/
+frontend/src-tauri/binaries/*
+!frontend/src-tauri/binaries/.gitkeep
+frontend/src-tauri/icon-src.png
+
+# TypeScript incremental build info
+frontend/*.tsbuildinfo
+NETSCOPEv1-latest/

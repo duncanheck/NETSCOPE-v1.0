@@ -1,0 +1,213 @@
+# Builds the NETSCOPE **desktop app** — the Tauri shell that wraps the web UI in a
+# native window (WebView2) and bundles the capture agent as a sidecar. The output
+# is a Windows installer (NSIS), so users get a real app with an icon and Start-menu
+# entry instead of a bare exe that opens a browser tab.
+#
+# The web UI and the headless agent are unchanged; this only adds the native shell,
+# so it runs alongside windows-build (the single-exe browser product), not instead.
+
+name: Desktop build (Tauri + NSIS)
+
+on:
+  push:
+    branches: ["claude/**", "main", "latest"]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: build NETSCOPE.exe (Tauri)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # --- Toolchains ---
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            agent
+            frontend/src-tauri
+
+      # --- Npcap SDK: build-time headers/import libs (Packet.lib/wpcap.lib) the
+      # `pcap` crate's linker needs for the `pcap` cargo feature. This is only the
+      # SDK (freely redistributable for linking against) — not the Npcap driver
+      # itself, which is a separate runtime install on the machine that runs the
+      # app (see README: Npcap must be installed on the host for G5 to activate).
+      - name: download Npcap SDK (build-time only)
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://npcap.com/dist/npcap-sdk-1.13.zip" -OutFile npcap-sdk.zip
+          Expand-Archive -Path npcap-sdk.zip -DestinationPath npcap-sdk
+          $libDir = (Resolve-Path "npcap-sdk/Lib/x64").Path
+          echo "LIB=$libDir;$env:LIB" >> $env:GITHUB_ENV
+
+      # --- Agent: release build, headless — Tauri serves the UI. NOT stamped
+      # with a build id: the sidecar never self-updates on its own (its
+      # agent-level updater is explicitly disabled at spawn time via
+      # NETSCOPE_NO_UPDATE — see src-tauri/src/main.rs and update.rs). The
+      # desktop app updates as a whole — shell + sidecar together — through
+      # Tauri's own signed updater below; a build-id stamp here would only
+      # invite the sidecar to compare itself against the *single-exe browser
+      # build's* manifest (a different product, an unrelated CI job's build
+      # numbering) and self-replace with the wrong artifact.
+      # `--features pcap` compiles in the Npcap capture path (G5) — without it,
+      # NETSCOPE_PCAP=1 at runtime is a no-op (see capture/mod.rs
+      # packet_observer_from_env). Then drop the binary where Tauri expects the
+      # sidecar: binaries/<name>-<triple>.exe
+      - name: build agent (release, headless, pcap-enabled)
+        working-directory: agent
+        run: cargo build --release -p netscope-agent --features pcap
+
+      # The Windows Warden enforcer (E4): shipped inside the app folder but NOT
+      # spawned by the shell — it's a Windows service the user opts into by
+      # running the bundled install-enforcer.ps1 elevated. Bundling it here means
+      # enforcement is one script away for every desktop install.
+      - name: build enforcer (release)
+        working-directory: agent
+        run: cargo build --release -p netscope-enforcer
+
+      - name: stage agent + enforcer as Tauri bundle binaries
+        run: |
+          New-Item -ItemType Directory -Force -Path frontend/src-tauri/binaries | Out-Null
+          Copy-Item agent/target/release/netscope-agent.exe `
+            frontend/src-tauri/binaries/netscope-agent-x86_64-pc-windows-msvc.exe
+          Copy-Item agent/target/release/netscope-enforcer.exe `
+            frontend/src-tauri/binaries/netscope-enforcer-x86_64-pc-windows-msvc.exe
+
+      # Keep the bundled service scripts in lockstep with the canonical copies in
+      # packaging/ (the committed src-tauri/resources copies are for local builds).
+      - name: stage enforcer install scripts
+        run: |
+          New-Item -ItemType Directory -Force -Path frontend/src-tauri/resources | Out-Null
+          Copy-Item packaging/install-enforcer.ps1 frontend/src-tauri/resources/install-enforcer.ps1 -Force
+          Copy-Item packaging/uninstall-enforcer.ps1 frontend/src-tauri/resources/uninstall-enforcer.ps1 -Force
+
+      # --- Frontend deps ---
+      - name: install frontend deps
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+
+      # --- Stamp the app version so the updater can tell one build from the
+      # next. Tauri embeds tauri.conf.json's `version` at compile time, so
+      # each build needs a version strictly higher than the last one a
+      # user might have installed — the monotonic Actions run number does
+      # that (0.1.<run_number>), the same comparison-key pattern the
+      # single-exe product uses with its own build id.
+      - name: stamp app version
+        working-directory: frontend/src-tauri
+        shell: pwsh
+        run: |
+          $version = "0.1.${{ github.run_number }}"
+          $conf = Get-Content tauri.conf.json -Raw | ConvertFrom-Json
+          $conf.version = $version
+          $conf | ConvertTo-Json -Depth 20 | Out-File -Encoding utf8 tauri.conf.json
+          echo "APP_VERSION=$version" >> $env:GITHUB_ENV
+
+      # --- Tauri build. `tauri:build` sets VITE_TRANSPORT + VITE_AGENT_URL (so
+      # the UI connects to the sidecar agent on :8787), runs the frontend
+      # build via beforeBuildCommand, then compiles the shell and produces
+      # the NSIS installer. Signing env vars (repo secrets) make the
+      # bundler also emit a `.sig` file next to the installer — the
+      # updater manifest below reads it. Without those secrets configured,
+      # this step still produces an installer, just an unsigned one the
+      # updater can't publish an update for (fresh installs are unaffected).
+      - name: tauri build (NSIS installer, signed for the updater)
+        working-directory: frontend
+        shell: pwsh
+        run: |
+          # Set the signing vars only when the secrets are actually configured
+          # — leaving them genuinely absent (not present-but-empty) when
+          # they're not, since it's the safer assumption about how the
+          # bundler treats "no key" vs. "empty key" without needing to know
+          # which for certain.
+          $key = "${{ secrets.TAURI_UPDATER_PRIVATE_KEY }}"
+          $pass = "${{ secrets.TAURI_UPDATER_PRIVATE_KEY_PASSWORD }}"
+          if ($key) { $env:TAURI_SIGNING_PRIVATE_KEY = $key }
+          if ($pass) { $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = $pass }
+          pnpm tauri:build
+
+      - name: upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: netscope-desktop-windows-x64
+          path: frontend/src-tauri/target/release/bundle/nsis/*.exe
+          if-no-files-found: error
+
+      # --- Rolling "desktop-latest" channel: the update feed installed apps
+      # poll (frontend/src-tauri/tauri.conf.json `plugins.updater.endpoints`).
+      # Only published from the trunk branch (this repo's trunk is `latest`,
+      # not `main` — there is no `main` branch here), and only when signing
+      # is configured — an unsigned manifest would just make every install
+      # report a permanently-failing update check.
+      - name: publish desktop update manifest
+        id: publish-manifest
+        if: github.ref == 'refs/heads/latest' || github.ref == 'refs/heads/main'
+        shell: pwsh
+        run: |
+          $key = "${{ secrets.TAURI_UPDATER_PRIVATE_KEY }}"
+          if (-not $key) {
+            Write-Host "TAURI_UPDATER_PRIVATE_KEY secret not configured — skipping desktop update manifest publish."
+            echo "published=false" >> $env:GITHUB_OUTPUT
+            exit 0
+          }
+
+          $bundleDir = "frontend/src-tauri/target/release/bundle/nsis"
+          $installer = Get-ChildItem "$bundleDir/*.exe" | Select-Object -First 1
+          $sig = Get-ChildItem "$bundleDir/*.exe.sig" | Select-Object -First 1
+          if (-not $installer -or -not $sig) {
+            throw "signed installer or .sig not found in $bundleDir — is createUpdaterArtifacts set in tauri.conf.json?"
+          }
+          $signature = Get-Content $sig.FullName -Raw
+          $repo = "${{ github.repository }}"
+          $pubDate = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+          $notes = ("${{ github.event.head_commit.message }}" -split "`n")[0]
+          $manifest = [ordered]@{
+            version = "${{ env.APP_VERSION }}"
+            notes = $notes
+            pub_date = $pubDate
+            platforms = [ordered]@{
+              "windows-x86_64" = [ordered]@{
+                signature = $signature
+                url = "https://github.com/$repo/releases/download/desktop-latest/$($installer.Name)"
+              }
+            }
+          }
+          New-Item -ItemType Directory -Force -Path dist-desktop | Out-Null
+          Copy-Item $installer.FullName "dist-desktop/$($installer.Name)"
+          $manifest | ConvertTo-Json -Depth 10 | Out-File -Encoding utf8 -NoNewline dist-desktop/latest.json
+          Get-Content dist-desktop/latest.json
+          echo "published=true" >> $env:GITHUB_OUTPUT
+
+      - name: publish rolling desktop release
+        if: (github.ref == 'refs/heads/latest' || github.ref == 'refs/heads/main') && steps.publish-manifest.outputs.published == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: desktop-latest
+          name: Latest desktop build
+          prerelease: true
+          make_latest: false
+          files: dist-desktop/*
+          fail_on_unmatched_files: true
+
+      # --- On tag: attach the installer to the GitHub Release ---
+      - name: publish installer on tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: frontend/src-tauri/target/release/bundle/nsis/*.exe
+          fail_on_unmatched_files: true

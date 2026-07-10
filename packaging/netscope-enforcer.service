@@ -1,0 +1,60 @@
+# NETSCOPE firewall enforcer (Warden E4) — the project's one privileged component.
+#
+# It does exactly one thing: add/remove addresses in its own `inet netscope`
+# nftables table, on request from the unprivileged agent over an authenticated
+# Unix socket. It is hardened to the floor: a dedicated user, only CAP_NET_ADMIN,
+# no new privileges, a read-only system view, and a private tmp.
+#
+# Install:
+#   sudo useradd --system --no-create-home --shell /usr/sbin/nologin netscope || true
+#   sudo install -m 0755 netscope-enforcer /usr/local/bin/netscope-enforcer
+#   sudo install -m 0644 packaging/netscope-enforcer.service /etc/systemd/system/
+#   # Authorize the desktop user that runs the agent:
+#   sudo systemctl edit netscope-enforcer    # add:  [Service]\nEnvironment=NETSCOPE_ENFORCER_ALLOW_UID=<your uid>
+#   sudo systemctl enable --now netscope-enforcer
+#
+# Then point the agent at it:  export NETSCOPE_ENFORCER_SOCKET=/run/netscope/enforcer.sock
+
+[Unit]
+Description=NETSCOPE firewall enforcer (privilege-separated)
+Documentation=https://github.com/duncanheck/NETSCOPE
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/netscope-enforcer
+
+# --- Least privilege: a service user with ONLY the capability needed to edit
+#     nftables. Everything else is dropped. ---
+User=netscope
+Group=netscope
+AmbientCapabilities=CAP_NET_ADMIN
+CapabilityBoundingSet=CAP_NET_ADMIN
+NoNewPrivileges=true
+
+# The socket lives here; systemd creates it 0755 owned by the service user.
+RuntimeDirectory=netscope
+RuntimeDirectoryMode=0755
+Environment=NETSCOPE_ENFORCER_SOCKET=/run/netscope/enforcer.sock
+# REQUIRED: the UID of the desktop user allowed to drive the enforcer. Without it
+# only root is accepted. Set via `systemctl edit netscope-enforcer`.
+# Environment=NETSCOPE_ENFORCER_ALLOW_UID=1000
+
+# --- Sandboxing: shrink the blast radius of this elevated process. ---
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_NETLINK
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

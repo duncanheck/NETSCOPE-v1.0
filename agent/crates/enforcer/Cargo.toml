@@ -1,0 +1,42 @@
+[package]
+name = "netscope-enforcer"
+description = "The NETSCOPE Warden enforcer (Track E, E4). A minimal privilege-separated helper that edits only its own `inet netscope` nftables set, on request from the unprivileged agent over an authenticated local socket. Holds the never-block floor itself."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "netscope_enforcer"
+path = "src/lib.rs"
+
+[[bin]]
+name = "netscope-enforcer"
+path = "src/main.rs"
+
+[dependencies]
+netscope-warden = { path = "../warden" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Unix peer authentication: read the connecting process' real UID via SO_PEERCRED
+# (std's UnixStream::peer_cred is still unstable). Linux/Unix only.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+# Windows (E4 follow-up, now landed): the privileged channel is a named pipe whose
+# peer is authenticated by its process-token SID (the SO_PEERCRED analog), and the
+# helper runs as a real Windows service. The firewall mechanism is the OS's own
+# (Windows Firewall rules in a namespaced "NETSCOPE Warden" group).
+[target.'cfg(windows)'.dependencies]
+windows-service = "0.8"
+windows = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_System_Pipes",
+    "Win32_System_IO",
+    "Win32_System_Threading",
+    "Win32_System_Memory",
+    "Win32_Storage_FileSystem",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+] }

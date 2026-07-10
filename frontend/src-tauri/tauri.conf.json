@@ -1,0 +1,62 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "NETSCOPE",
+  "version": "0.1.0",
+  "identifier": "com.netscope.desktop",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:5173",
+    "beforeDevCommand": "pnpm dev",
+    "beforeBuildCommand": "pnpm build"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "NETSCOPE",
+        "width": 1280,
+        "height": 820,
+        "minWidth": 900,
+        "minHeight": 600,
+        "resizable": true,
+        "fullscreen": false,
+        "center": true,
+        "theme": "Dark"
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "externalBin": ["binaries/netscope-agent", "binaries/netscope-enforcer"],
+    "resources": [
+      "resources/install-enforcer.ps1",
+      "resources/uninstall-enforcer.ps1"
+    ],
+    "shortDescription": "Live network-connection visualizer",
+    "longDescription": "NETSCOPE renders your machine's live network connections as a deep-sea organism. The desktop shell runs the capture agent and shows the visualizer in a native window. The bundled Warden enforcer service (opt-in, run install-enforcer.ps1 as admin) applies block rules through Windows Firewall.",
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "active": true,
+      "endpoints": [
+        "https://github.com/duncanheck/NETSCOPE/releases/download/desktop-latest/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEUyMjdEMTkwRTE2REUxOTEKUldTUjRXM2hrTkVuNG9LRldLRDNKL0V3MWVwSWRIMVA4b0xrS1dML0ZtWmFac2YxN2tQVzhZVzAK",
+      "windows": {
+        "installMode": "quiet"
+      }
+    }
+  }
+}

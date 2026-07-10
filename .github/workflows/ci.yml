@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  agent:
+    name: agent (rust)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: agent
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: agent
+      - name: fmt
+        run: cargo fmt --all --check
+      - name: clippy
+        run: cargo clippy --all-targets -- -D warnings
+      - name: test (also regenerates TS bindings)
+        run: cargo test --all
+
+      # The G5 packet-capture path (cargo feature `pcap`) needs libpcap headers.
+      # Built + linted + tested here so the optional path can't rot; release
+      # builds stay feature-off (no capture SDK required to ship).
+      - name: pcap feature (G5)
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq libpcap-dev
+          cargo clippy --all-targets --features pcap -- -D warnings
+          cargo test -p netscope-agent --features pcap
+
+      # The schema is single-source-of-truth: TS types are generated FROM Rust.
+      # If `cargo test` produced a diff in the generated bindings, they drifted
+      # and were committed stale — fail the build (PITFALLS A5).
+      - name: protocol bindings are not drifted
+        run: |
+          if ! git diff --quiet -- ../frontend/src/protocol/generated; then
+            echo "::error::Generated protocol bindings are out of date."
+            echo "Run 'cargo test -p netscope-protocol export_bindings' and commit the result."
+            git diff -- ../frontend/src/protocol/generated
+            exit 1
+          fi
+
+  frontend:
+    name: frontend (vite/ts)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build

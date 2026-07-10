@@ -1,0 +1,12 @@
+[package]
+name = "netscope-warden"
+description = "The NETSCOPE Warden (Track E). E1: the block-policy engine — a pure, testable decision function with a dry-run, zero privilege and no enforcement."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+netscope-protocol = { path = "../protocol" }
+serde = { workspace = true }
+serde_json = { workspace = true }

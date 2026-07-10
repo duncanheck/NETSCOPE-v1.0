@@ -1,0 +1,14 @@
+[package]
+name = "netscope-narrator"
+description = "The NETSCOPE narrator (AI layer). D1: the scrubbing pipeline — privacy redaction applied before any flow leaves the machine for an LLM API."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+netscope-protocol = { path = "../protocol" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+# D2 explain: a small blocking HTTP client for the local-Ollama and Claude providers.
+ureq = { workspace = true }

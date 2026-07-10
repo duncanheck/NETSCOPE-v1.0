@@ -1,0 +1,58 @@
+[workspace]
+resolver = "2"
+members = ["crates/protocol", "crates/agent", "crates/ring", "crates/narrator", "crates/warden", "crates/enforcer"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+rust-version = "1.75"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# MessagePack — the negotiated binary wire encoding (A5). `with_struct_map` keeps
+# the same logical shape as JSON so the two dialects are interchangeable.
+rmp-serde = "1"
+ts-rs = "10"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "sync", "signal"] }
+axum = { version = "0.7", features = ["ws"] }
+# Low-level serve loop (so the handshake can be bounded by a header-read timeout —
+# the slowloris control the threat-model promises, made load-bearing by the C3
+# remote path). All already resolved transitively via axum.
+hyper = { version = "1", features = ["server", "http1", "http2"] }
+hyper-util = { version = "0.1", features = ["server", "server-auto", "tokio"] }
+tower = "0.5"
+# Split the client WebSocket into send/recv halves so the agent can read
+# client→agent control messages (C4 resync) while still streaming (already in lock).
+futures-util = { version = "0.3", default-features = false, features = ["sink"] }
+rust-embed = { version = "8", features = ["mime-guess"] }
+maxminddb = "0.24"
+dns-lookup = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+crossbeam = "0.8"
+criterion = "0.5"
+# C2 pairing + auth: CSPRNG for codes/tokens, SHA-256 for token hashing, base64url
+# for token encoding. All already resolved in the lockfile as transitive deps.
+getrandom = "0.2"
+sha2 = "0.10"
+base64 = "0.22"
+# Self-update (the Windows product): a small blocking HTTPS client for the manifest
+# + exe download, and a Windows-safe in-place binary swap.
+ureq = "2"
+self-replace = "1"
+# In-app setup (G3.2): MaxMind ships GeoLite2 as tar.gz; these unpack the .mmdb
+# so the UI can enable geo without the shell script.
+flate2 = "1"
+tar = "0.4"
+# Packet capture (G5, optional): libpcap on Unix, Npcap on Windows. Behind the
+# agent's `pcap` cargo feature so default builds need no capture SDK.
+pcap = "2"
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_NetworkManagement_IpHelper",
+    "Win32_Networking_WinSock",
+    "Win32_System_Threading",
+    "Win32_System_ProcessStatus",
+] }

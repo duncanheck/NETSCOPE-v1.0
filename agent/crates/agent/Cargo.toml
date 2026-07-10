@@ -1,0 +1,52 @@
+[package]
+name = "netscope-agent"
+description = "The NETSCOPE agent — captures connection state and serves it over the versioned wire protocol."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "netscope-agent"
+path = "src/main.rs"
+
+[features]
+# When enabled, the built frontend (frontend/dist) is embedded in the binary and
+# served on the same port as the WebSocket feed — the single-exe product build.
+# Off by default so `cargo run` works without building the frontend first.
+bundled-ui = ["dep:rust-embed"]
+# Packet capture (G5): the pcap/Npcap path. Off by default — building it needs
+# libpcap headers (Unix) or the Npcap SDK (Windows), and running it needs
+# capture privilege + NETSCOPE_PCAP=1. The default path stays polling-only.
+pcap = ["dep:pcap"]
+
+[dependencies]
+netscope-protocol = { path = "../protocol" }
+netscope-ring = { path = "../ring" }
+netscope-narrator = { path = "../narrator" }
+netscope-warden = { path = "../warden" }
+netscope-enforcer = { path = "../enforcer" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+axum = { workspace = true }
+hyper = { workspace = true }
+hyper-util = { workspace = true }
+tower = { workspace = true }
+futures-util = { workspace = true }
+rust-embed = { workspace = true, optional = true }
+maxminddb = { workspace = true }
+dns-lookup = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+getrandom = { workspace = true }
+sha2 = { workspace = true }
+base64 = { workspace = true }
+ureq = { workspace = true }
+self-replace = { workspace = true }
+flate2 = { workspace = true }
+tar = { workspace = true }
+pcap = { workspace = true, optional = true }
+
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true }
