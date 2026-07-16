@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { applyPolicy, blockIp, fetchBlocked, unblockAll } from "./warden";
+import { applyPolicy, blockIp, fetchBlocked, unblockAll, verifyEnforcement } from "./warden";
 
 const BASE = "http://127.0.0.1:8787";
 
@@ -97,5 +97,56 @@ describe("warden enforcement transport", () => {
 
     await unblockAll(BASE, ["8.8.8.8"]);
     expect(JSON.parse(fetchMock.mock.calls[1][1]?.body as string)).toEqual({ ips: ["8.8.8.8"] });
+  });
+
+  it("verifyEnforcement reports 'ok' when the firewall matches what's expected", async () => {
+    stubFetch(
+      () =>
+        new Response(
+          JSON.stringify({ status: "verified", live: ["8.8.8.8"], expected: ["8.8.8.8"], in_sync: true }),
+          { status: 200 },
+        ),
+    );
+    const res = await verifyEnforcement(BASE);
+    expect(res).toEqual({ state: "ok", live: ["8.8.8.8"], expected: ["8.8.8.8"], error: null });
+  });
+
+  it("verifyEnforcement reports 'drift' when the firewall disagrees with the enforcer's belief", async () => {
+    stubFetch(
+      () =>
+        new Response(
+          JSON.stringify({ status: "verified", live: ["8.8.8.8"], expected: ["8.8.8.8", "9.9.9.9"], in_sync: false }),
+          { status: 200 },
+        ),
+    );
+    const res = await verifyEnforcement(BASE);
+    expect(res.state).toBe("drift");
+    expect(res.live).toEqual(["8.8.8.8"]);
+    expect(res.expected).toEqual(["8.8.8.8", "9.9.9.9"]);
+  });
+
+  it("verifyEnforcement reports 'not_configured' on 503, distinct from 'unreachable'", async () => {
+    stubFetch(() => new Response(JSON.stringify({ ok: false, error: "not configured" }), { status: 503 }));
+    const res = await verifyEnforcement(BASE);
+    expect(res.state).toBe("not_configured");
+  });
+
+  it("verifyEnforcement reports 'unreachable' on a non-503 error status, with the error surfaced", async () => {
+    stubFetch(
+      () => new Response(JSON.stringify({ ok: false, error: "cannot reach enforcer at ..." }), { status: 502 }),
+    );
+    const res = await verifyEnforcement(BASE);
+    expect(res.state).toBe("unreachable");
+    expect(res.error).toBe("cannot reach enforcer at ...");
+  });
+
+  it("verifyEnforcement reports 'unreachable' when the agent itself can't be reached", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.reject(new Error("network down"))),
+    );
+    const res = await verifyEnforcement(BASE);
+    expect(res.state).toBe("unreachable");
+    expect(res.error).toContain("network down");
   });
 });

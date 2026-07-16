@@ -14,8 +14,10 @@ import {
   defaultAgentHttpBase,
   fetchBlocked,
   unblockAll,
+  verifyEnforcement,
   type EnforceResult,
   type Policy,
+  type VerifyState,
 } from "../transport";
 
 export interface AuditEntry {
@@ -45,6 +47,17 @@ function saveAudit(entries: AuditEntry[]) {
   }
 }
 
+/** The result of a live `/warden/verify` check — real-time proof the firewall is
+ *  actually enforcing what the enforcer believes it applied, not just that the
+ *  enforcer process responds. See `transport/warden.ts`'s `VerifyResult`. */
+export interface Health {
+  state: VerifyState;
+  live: string[];
+  expected: string[];
+  checkedAt: number;
+  error: string | null;
+}
+
 interface WardenState {
   /** null until first probed; false ⇒ generate-only (no enforcer). */
   available: boolean | null;
@@ -53,8 +66,11 @@ interface WardenState {
   busy: boolean;
   /** The last enforce attempt, for surfacing rejected/errors inline. */
   last: EnforceResult | null;
+  /** null until first verified. */
+  health: Health | null;
 
   refresh: () => Promise<void>;
+  verify: () => Promise<void>;
   apply: (policy: Policy, label: string) => Promise<void>;
   block: (ip: string) => Promise<void>;
   /** Unblock one address (the per-row action), or all when omitted. */
@@ -74,10 +90,30 @@ export const useWardenStore = create<WardenState>((set, get) => ({
   audit: loadAudit(),
   busy: false,
   last: null,
+  health: null,
 
   refresh: async () => {
     const state = await fetchBlocked(defaultAgentHttpBase());
     set({ available: state.available, blocked: state.blocked });
+  },
+
+  verify: async () => {
+    const res = await verifyEnforcement(defaultAgentHttpBase());
+    const prev = get().health;
+    // Drift is the one transition worth an audit entry of its own — everything
+    // else here is a read, not an action, so it doesn't belong in the log.
+    if (res.state === "drift" && prev?.state !== "drift") {
+      record(get, set, {
+        ts: Date.now(),
+        action: "apply",
+        detail: `⚠ drift detected — firewall shows ${res.live.length}, expected ${res.expected.length}`,
+        ok: false,
+      });
+    }
+    set({
+      health: { state: res.state, live: res.live, expected: res.expected, checkedAt: Date.now(), error: res.error },
+      available: res.state === "not_configured" ? false : res.state === "unreachable" ? get().available : true,
+    });
   },
 
   apply: async (policy, label) => {

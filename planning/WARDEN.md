@@ -1,6 +1,6 @@
 # planning/WARDEN.md — Track E: The Warden
 
-*Status: **E1 + E2 + E3 landed; E4 landed (Linux + Windows); E6 landed; E5 proposed.** Turning NETSCOPE from sight into action: block the
+*Status: **E1 + E2 + E3 landed; E4 landed (Linux + Windows); E6 landed; E7 landed; E5 proposed.** Turning NETSCOPE from sight into action: block the
 risky flows it already surfaces — trackers, plaintext exfil, and known-bad
 endpoints — without spending a cent, without an inline packet engine, and without
 quietly regressing the "runs unprivileged, no admin needed" property that makes the
@@ -174,10 +174,52 @@ through a small `useWardenStore`, so the panel and the flow inspector stay in sy
 mapping unit-tested (incl. the not-configured path) and the apply/unblock/clear loop
 smoke-tested end-to-end against the live enforcer.
 
+**E7. Real-time verification — proving the firewall is actually enforcing. ✅**
+Everything through E6 trusts the enforcer's own bookkeeping: `GET /warden/blocked`
+answers from an **in-memory mirror** of what the enforcer believes it applied, not a
+live read of the OS. That's a real gap for a security-facing status — Windows
+Firewall rules can be edited or reset outside NETSCOPE, an `nft` resync can silently
+fail, and the UI would keep showing "N blocks active" regardless. E7 closes it with a
+new enforcer request, `Verify` (`netscope_enforcer::Applier::verify`), that re-reads
+the *actual* structure — `nft -j list set inet netscope blocked{4,6}` on Linux,
+`Get-NetFirewallRule -Group 'NETSCOPE Warden' | Get-NetFirewallAddressFilter` on
+Windows — and compares it to the enforcer's expectation, returning `{live, expected,
+in_sync}` over a new loopback-only `GET /warden/verify` (mirroring the
+NotConfigured(503)/Failed(502) split `/warden/blocked` already has, so "never
+installed" and "installed but not responding" stay distinguishable). The HUD polls
+it every 8s and immediately after every apply/unblock (no waiting on the next tick
+to confirm what the user just did), showing one plain-language line: verified (with
+a live count and "checked Ns ago"), drift (live vs. expected disagree — an audited
+event, not just a UI flag), unreachable, or not installed.
+
+On top of that live proof, E7 also adds the **simple surface**: a **Warden Mode**
+switch (applies the same default risky-traffic policy the rule checkboxes already
+compute — trackers, plaintext, unattributable — behind one confirm step to turn on,
+one click to unblock everything and turn off) and a **Threat Feed** switch (the same
+`useThreats` toggle, promoted to the top). Both read the *same* policy state the
+granular checkboxes drive, so the simple switches and the advanced panel (now under
+a collapsible **advanced controls** `<details>`) never disagree — flipping "Warden
+Mode" and opening "advanced" shows the identical blocked list and audit entry.
+Neither switch ever re-applies on page load from its persisted (localStorage) state
+— reflecting the last-seen position is fine, silently re-blocking on a refresh is
+not.
+*Skill:* live-vs-belief verification (the "trust but verify" gap in the E4 design),
+opinionated-defaults-over-granular-controls UX. *Artifact:* `Applier::verify` unit
+tests (in-sync + simulated external drift, via `MockApplier`) plus an end-to-end
+smoke test against a **real** `netscope-enforcer` + `nft`: apply, verify (in sync),
+hand-edit the live nftables set to simulate external tampering, verify again (drift
+correctly detected and audited) — see the enforcer's own audit log line
+`verify: DRIFT — live N expected M`. The Windows `Get-NetFirewallAddressFilter`
+query path is `cargo check`/`clippy`-clean on the MSVC target (this project's usual
+bar for Windows-only code written off a Linux dev box) but, like the rest of
+`apply_windows.rs`, needs a real Windows run to confirm against actual Firewall
+state.
+
 **Suggested order (so risk lands last):** E1 → E3 → E2 give a complete, zero-
 privilege, zero-risk "generate a firewall script and apply it yourself" — free and
 efficient, exactly as asked. E4 → E5 → E6 add in-app apply, immediacy, and the UX,
-each gated behind the opt-in privileged helper.
+each gated behind the opt-in privileged helper. E7 adds proof that E4's apply is
+still true, plus a simpler front door onto the same policy.
 
 -----
 
@@ -249,6 +291,31 @@ each gated behind the opt-in privileged helper.
   *Prefire:* preview before apply; one-click undo + "unblock all"; a persistent,
   visible "N blocks active" badge; optional auto-expiring blocks; the allowlist
   front-and-centre; an audit trail. Never block silently.
+
+**E7 (real-time verification + the simple switches)**
+- *Pitfall:* a "verified" badge that's actually just re-displaying the enforcer's own
+  in-memory belief is worse than no badge — it launders an unverified claim as proof.
+  *Prefire:* `verify()` is a genuinely separate code path from `list()`/`blocked()` —
+  it shells out to `nft -j list set` / `Get-NetFirewallAddressFilter` fresh every
+  call, never reads the `blocked` `BTreeSet` the enforcer keeps in memory. Proven with
+  a test that mutates the mock applier's set directly (simulating external drift the
+  enforcer's own bookkeeping never sees) and checking `verify()` catches it.
+- *Pitfall:* the simple switches become a second policy that quietly diverges from
+  the advanced rule checkboxes, so "Warden Mode: on" stops meaning what the panel
+  underneath shows.
+  *Prefire:* no second policy — the switch applies exactly the `deny` the checkboxes
+  already compute (reusing the E1 rule types, not a hardcoded parallel list), so the
+  simple and advanced views are always describing the same blocked set.
+- *Pitfall:* a persisted "Warden Mode: on" flag re-applying a block on every app
+  launch, unprompted — the exact "never block silently" line this project holds.
+  *Prefire:* the switch position is remembered (localStorage) for display only; only
+  a live toggle event calls `apply`/`unblock`, never a mount effect.
+- *Pitfall:* polling `/warden/verify` on a fixed timer only, so the status line lags
+  up to a full interval behind an action the user *just took* — undermining the
+  "real-time" claim exactly when it matters most.
+  *Prefire:* re-verify immediately after every apply/unblock, in addition to the
+  timer (caught live, against a real enforcer, in manual testing — the first cut of
+  this only polled periodically and visibly lagged).
 
 **Cross-cutting**
 - *Pitfall:* enforcement regresses the "runs unprivileged, no admin" selling point.

@@ -295,6 +295,177 @@ const WARDEN_RULES: { rule: Rule; label: string }[] = [
   { rule: { type: "flag", value: "unresolved_org" }, label: "unattributable" },
 ];
 
+const WARDEN_MODE_KEY = "netscope.warden.mode_on";
+
+function loadWardenModeOn(): boolean {
+  try {
+    return localStorage.getItem(WARDEN_MODE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function saveWardenModeOn(on: boolean) {
+  try {
+    localStorage.setItem(WARDEN_MODE_KEY, on ? "1" : "0");
+  } catch {
+    /* private mode / quota — non-fatal */
+  }
+}
+
+// The top-of-panel simple controls: one switch for "block what NETSCOPE flags as
+// risky" (whatever the advanced rule checkboxes below currently select) and one for
+// "include the threat-intel feed", plus a live, polled proof that the firewall is
+// actually enforcing it — not just that the enforcer process is alive (Track E,
+// real-time verification). Never applies anything without the confirm step below;
+// reflects stored intent on reload but never re-applies on its own (planning/WARDEN.md's
+// "never block silently" — a page refresh is not a user action).
+function WardenSwitches({
+  deny,
+  threatsLoaded,
+  useThreats,
+  setUseThreats,
+}: {
+  deny: Rule[];
+  threatsLoaded: boolean;
+  useThreats: boolean;
+  setUseThreats: (v: boolean) => void;
+}) {
+  const [wardenModeOn, setWardenModeOn] = useState(loadWardenModeOn);
+  const [confirming, setConfirming] = useState(false);
+
+  const available = useWardenStore((s) => s.available);
+  const busy = useWardenStore((s) => s.busy);
+  const health = useWardenStore((s) => s.health);
+  const refresh = useWardenStore((s) => s.refresh);
+  const verify = useWardenStore((s) => s.verify);
+  const apply = useWardenStore((s) => s.apply);
+  const unblock = useWardenStore((s) => s.unblock);
+
+  useEffect(() => {
+    void refresh();
+    void verify();
+    const t = setInterval(() => void verify(), 8000);
+    return () => clearInterval(t);
+  }, [refresh, verify]);
+
+  const setMode = (on: boolean) => {
+    setWardenModeOn(on);
+    saveWardenModeOn(on);
+  };
+
+  const onFlip = (checked: boolean) => {
+    if (!checked) {
+      setConfirming(false);
+      setMode(false);
+      void unblock().then(() => verify());
+      return;
+    }
+    setConfirming(true);
+  };
+
+  const onConfirm = async () => {
+    setConfirming(false);
+    setMode(true);
+    await apply({ allow: [], deny }, "warden mode");
+    // The enforcer may have refused (not configured, or every target rejected);
+    // don't claim "on" if nothing actually got applied.
+    if (!useWardenStore.getState().last?.ok) setMode(false);
+    // Don't wait up to 8s for the next poll to confirm what was just done —
+    // the whole point of live verification is that it's live.
+    await verify();
+  };
+
+  // Refining an already-consented block (adding/dropping the threat feed) while
+  // Warden Mode is on re-applies immediately — it's narrowing what's already
+  // agreed to, not a fresh decision, so no second confirm.
+  const onThreatFeedChange = (checked: boolean) => {
+    setUseThreats(checked);
+    if (wardenModeOn) {
+      const nextDeny = checked
+        ? [...deny.filter((r) => r.type !== "threat"), { type: "threat" as const }]
+        : deny.filter((r) => r.type !== "threat");
+      void apply({ allow: [], deny: nextDeny }, "warden mode").then(() => verify());
+    }
+  };
+
+  const statusLine = () => {
+    if (available === false) {
+      return <span className="warden__status warden__status--off">○ enforcement not installed — generate-only</span>;
+    }
+    if (!health) return null;
+    if (health.state === "unreachable") {
+      return <span className="warden__status warden__status--warn">⚠ enforcer unreachable — is the service running?</span>;
+    }
+    if (health.state === "drift") {
+      return (
+        <span className="warden__status warden__status--warn">
+          ⚠ drift — firewall shows {health.live.length}, enforcer expects {health.expected.length} — restart the
+          enforcer service
+        </span>
+      );
+    }
+    if (health.state === "ok") {
+      const ago = Math.max(0, Math.round((Date.now() - health.checkedAt) / 1000));
+      return (
+        <span className="warden__status warden__status--ok">
+          ✓ verified — {health.live.length} block{health.live.length === 1 ? "" : "s"} confirmed in the firewall ·
+          checked {ago}s ago
+        </span>
+      );
+    }
+    return null;
+  };
+
+  return (
+    <div className="warden__switches">
+      <div className="warden__switch-row">
+        <label className="warden__switch" title={available === false ? "install the enforcer to turn this on" : undefined}>
+          <input
+            type="checkbox"
+            checked={wardenModeOn}
+            disabled={busy || available === false}
+            onChange={(e) => onFlip(e.target.checked)}
+          />
+          <span className="warden__switch-track" aria-hidden="true" />
+          <span className="warden__switch-label">Warden Mode</span>
+        </label>
+        <label className="warden__switch" title={threatsLoaded ? undefined : "run scripts/download-threatfeeds.sh, then restart the agent"}>
+          <input
+            type="checkbox"
+            checked={useThreats && threatsLoaded}
+            disabled={busy || !threatsLoaded}
+            onChange={(e) => onThreatFeedChange(e.target.checked)}
+          />
+          <span className="warden__switch-track" aria-hidden="true" />
+          <span className="warden__switch-label">
+            Threat Feed
+            {!threatsLoaded && <span className="warden__feedcount warden__feedcount--off">no feeds</span>}
+          </span>
+        </label>
+      </div>
+      {confirming && (
+        <div className="enforce__confirm">
+          <span>Block trackers, plaintext, and unattributable traffic through your firewall?</span>
+          <button className="hud__btn enforce__btn enforce__btn--danger" onClick={() => void onConfirm()} disabled={busy}>
+            confirm
+          </button>
+          <button className="hud__btn enforce__btn" onClick={() => setConfirming(false)} disabled={busy}>
+            cancel
+          </button>
+        </div>
+      )}
+      {available === false && (
+        <div className="warden__hint">
+          Windows: install the enforcer service (run <code>install-enforcer.ps1</code> as admin — NETSCOPE detects it
+          automatically). Linux: run <code>netscope-enforcer</code> and set <code>NETSCOPE_ENFORCER_SOCKET</code>.
+        </div>
+      )}
+      <div className="warden__status-line">{statusLine()}</div>
+    </div>
+  );
+}
+
 const FIREWALLS: { id: Firewall; label: string }[] = [
   { id: "nftables", label: "Linux (nftables)" },
   { id: "netsh", label: "Windows (netsh)" },
@@ -354,106 +525,112 @@ function WardenPanel() {
         <span>traffic blocking</span>
         <span className="warden__tag">{enforceAvailable ? "enforce ready" : "preview only"}</span>
       </div>
-      <div className="warden__rules">
-        {WARDEN_RULES.map(({ rule, label }) => (
-          <label key={key(rule)} className="warden__rule">
+
+      <WardenSwitches deny={deny} threatsLoaded={threatsLoaded} useThreats={useThreats} setUseThreats={setUseThreats} />
+
+      <details className="warden__advanced">
+        <summary className="warden__advanced-summary">advanced controls</summary>
+        <div className="warden__rules">
+          {WARDEN_RULES.map(({ rule, label }) => (
+            <label key={key(rule)} className="warden__rule">
+              <input
+                type="checkbox"
+                checked={!!on[key(rule)]}
+                onChange={(e) => setOn((s) => ({ ...s, [key(rule)]: e.target.checked }))}
+              />
+              {label}
+            </label>
+          ))}
+          {/* E2: block by reputation. Disabled (and explained) until feeds load. */}
+          <label
+            className="warden__rule"
+            title={
+              threatsLoaded
+                ? `${threats?.indicators.toLocaleString()} indicators from ${threats?.sources.length} feed${threats?.sources.length === 1 ? "" : "s"}`
+                : "run scripts/download-threatfeeds.sh, then restart the agent"
+            }
+          >
             <input
               type="checkbox"
-              checked={!!on[key(rule)]}
-              onChange={(e) => setOn((s) => ({ ...s, [key(rule)]: e.target.checked }))}
+              checked={useThreats && threatsLoaded}
+              disabled={!threatsLoaded}
+              onChange={(e) => setUseThreats(e.target.checked)}
             />
-            {label}
+            known-bad lists
+            {threatsLoaded ? (
+              <span className="warden__feedcount">
+                {threats?.indicators.toLocaleString()} indicators
+              </span>
+            ) : (
+              <span className="warden__feedcount warden__feedcount--off">no feeds</span>
+            )}
           </label>
-        ))}
-        {/* E2: block by reputation. Disabled (and explained) until feeds load. */}
-        <label
-          className="warden__rule"
-          title={
-            threatsLoaded
-              ? `${threats?.indicators.toLocaleString()} indicators from ${threats?.sources.length} feed${threats?.sources.length === 1 ? "" : "s"}`
-              : "run scripts/download-threatfeeds.sh, then restart the agent"
-          }
+        </div>
+        <button
+          className="hud__btn warden__btn"
+          onClick={onPreview}
+          disabled={busy || deny.length === 0}
         >
-          <input
-            type="checkbox"
-            checked={useThreats && threatsLoaded}
-            disabled={!threatsLoaded}
-            onChange={(e) => setUseThreats(e.target.checked)}
-          />
-          known-bad lists
-          {threatsLoaded ? (
-            <span className="warden__feedcount">
-              {threats?.indicators.toLocaleString()} indicators
-            </span>
-          ) : (
-            <span className="warden__feedcount warden__feedcount--off">no feeds</span>
-          )}
-        </label>
-      </div>
-      <button
-        className="hud__btn warden__btn"
-        onClick={onPreview}
-        disabled={busy || deny.length === 0}
-      >
-        {busy ? "checking…" : "preview blocks"}
-      </button>
-      {plan && (
-        <div className="warden__result">
-          <div className="warden__count">
-            {plan.blocks.length === 0
-              ? `nothing to block (${plan.considered} flows clean)`
-              : `${plan.blocks.length} of ${plan.considered} flows would be blocked · ${plan.targets.length} IP${plan.targets.length === 1 ? "" : "s"}`}
-          </div>
-          {plan.blocks.slice(0, 8).map((b) => (
-            <div key={b.flow_id} className="warden__row" title={b.reason}>
-              <span className="warden__host">{b.host}</span>
-              <span className="warden__why">{b.reason}</span>
+          {busy ? "checking…" : "preview blocks"}
+        </button>
+        {plan && (
+          <div className="warden__result">
+            <div className="warden__count">
+              {plan.blocks.length === 0
+                ? `nothing to block (${plan.considered} flows clean)`
+                : `${plan.blocks.length} of ${plan.considered} flows would be blocked · ${plan.targets.length} IP${plan.targets.length === 1 ? "" : "s"}`}
             </div>
-          ))}
-          {plan.blocks.length > 8 && (
-            <div className="warden__more">+{plan.blocks.length - 8} more</div>
-          )}
+            {plan.blocks.slice(0, 8).map((b) => (
+              <div key={b.flow_id} className="warden__row" title={b.reason}>
+                <span className="warden__host">{b.host}</span>
+                <span className="warden__why">{b.reason}</span>
+              </div>
+            ))}
+            {plan.blocks.length > 8 && (
+              <div className="warden__more">+{plan.blocks.length - 8} more</div>
+            )}
 
-          {/* E3: generate a native firewall ruleset from the same policy. */}
-          <div className="warden__gen">
-            <select
-              className="warden__select"
-              aria-label="firewall backend"
-              value={backend}
-              onChange={(e) => setBackend(e.target.value as Firewall)}
-            >
-              {FIREWALLS.map((f) => (
-                <option key={f.id} value={f.id}>
-                  {f.label}
-                </option>
-              ))}
-            </select>
-            <button className="hud__btn warden__btn" onClick={onGenerate} disabled={busy}>
-              generate firewall rules
-            </button>
+            {/* E3: generate a native firewall ruleset from the same policy. */}
+            <div className="warden__gen">
+              <select
+                className="warden__select"
+                aria-label="firewall backend"
+                value={backend}
+                onChange={(e) => setBackend(e.target.value as Firewall)}
+              >
+                {FIREWALLS.map((f) => (
+                  <option key={f.id} value={f.id}>
+                    {f.label}
+                  </option>
+                ))}
+              </select>
+              <button className="hud__btn warden__btn" onClick={onGenerate} disabled={busy}>
+                generate firewall rules
+              </button>
+            </div>
           </div>
-        </div>
-      )}
+        )}
 
-      {ruleset && (
-        <div className="warden__ruleset">
-          <div className="warden__rs-head">
-            <span>
-              {ruleset.filename} · {ruleset.target_count} target
-              {ruleset.target_count === 1 ? "" : "s"}
-            </span>
-            <button className="warden__copy" onClick={onCopy}>
-              {copied ? "copied ✓" : "copy"}
-            </button>
+        {ruleset && (
+          <div className="warden__ruleset">
+            <div className="warden__rs-head">
+              <span>
+                {ruleset.filename} · {ruleset.target_count} target
+                {ruleset.target_count === 1 ? "" : "s"}
+              </span>
+              <button className="warden__copy" onClick={onCopy}>
+                {copied ? "copied ✓" : "copy"}
+              </button>
+            </div>
+            <pre className="warden__rules">{ruleset.rules}</pre>
+            <div className="warden__hint">apply: {ruleset.apply}</div>
+            <div className="warden__hint">remove: {ruleset.remove}</div>
           </div>
-          <pre className="warden__rules">{ruleset.rules}</pre>
-          <div className="warden__hint">apply: {ruleset.apply}</div>
-          <div className="warden__hint">remove: {ruleset.remove}</div>
-        </div>
-      )}
+        )}
 
-      {/* E6: actual enforcement via the privileged helper (E4), if configured. */}
-      <EnforcementPanel policy={{ allow: [], deny }} hasPreview={!!plan} />
+        {/* E6: actual enforcement via the privileged helper (E4), if configured. */}
+        <EnforcementPanel policy={{ allow: [], deny }} hasPreview={!!plan} />
+      </details>
     </div>
   );
 }

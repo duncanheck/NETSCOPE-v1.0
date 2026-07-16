@@ -332,6 +332,79 @@ html, body, #root, .app {
 }
 .warden__hint { margin-top: 4px; font-size: 10px; color: #7a8aa0; }
 
+/* Track E, real-time verification: the simple Warden Mode / Threat Feed switches
+   and the live "is this actually enforcing" status line above the advanced panel. */
+.warden__switches { margin-bottom: 10px; }
+.warden__switch-row { display: flex; gap: 20px; flex-wrap: wrap; margin-bottom: 4px; }
+.warden__switch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--ink);
+  cursor: pointer;
+}
+.warden__switch:has(input:disabled) { color: #7a8aa0; cursor: not-allowed; }
+.warden__switch input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+  pointer-events: none;
+}
+.warden__switch-track {
+  position: relative;
+  width: 32px;
+  height: 18px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid var(--hud-border);
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.warden__switch-track::after {
+  content: "";
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #9fb0c0;
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+.warden__switch input:checked + .warden__switch-track {
+  background: rgba(63, 214, 196, 0.35);
+  border-color: rgba(63, 214, 196, 0.6);
+}
+.warden__switch input:checked + .warden__switch-track::after {
+  transform: translateX(14px);
+  background: #3fd6c4;
+}
+.warden__switch input:disabled + .warden__switch-track { opacity: 0.5; }
+.warden__switch input:focus-visible + .warden__switch-track { outline: 2px solid #3fd6c4; outline-offset: 2px; }
+.warden__switch-label { display: flex; align-items: center; gap: 6px; }
+
+.warden__status-line { margin-top: 4px; font-size: 10px; }
+.warden__status { display: inline-block; }
+.warden__status--ok { color: #3fd6c4; }
+.warden__status--warn { color: #ffb347; }
+.warden__status--off { color: #7a8aa0; }
+
+.warden__advanced { margin-top: 10px; border-top: 1px solid var(--hud-border); padding-top: 8px; }
+.warden__advanced-summary {
+  cursor: pointer;
+  font-size: 10px;
+  color: #7a8aa0;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  list-style: none;
+  margin-bottom: 8px;
+}
+.warden__advanced-summary::-webkit-details-marker { display: none; }
+.warden__advanced-summary::before { content: "▸ "; }
+.warden__advanced[open] > .warden__advanced-summary::before { content: "▾ "; }
+
 /* E6: enforcement UI — apply/blocked list/audit. */
 .enforce {
   margin-top: 12px;

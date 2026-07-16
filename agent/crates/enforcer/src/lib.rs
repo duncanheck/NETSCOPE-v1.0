@@ -123,6 +123,29 @@ impl<A: Applier> Enforcer<A> {
                 Err(e) => err(format!("clear failed: {e}")),
             },
             Request::Apply { add, remove } => self.apply(add, remove),
+            Request::Verify => match self.applier.verify() {
+                Ok(live) => {
+                    let expected = self.blocked();
+                    let live_set: BTreeSet<IpAddr> = live.iter().copied().collect();
+                    let expected_set: BTreeSet<IpAddr> = expected.iter().copied().collect();
+                    let in_sync = live_set == expected_set;
+                    if !in_sync {
+                        // Drift is exactly the case this exists to catch — always
+                        // audited, not just a UI-side concern.
+                        audit(&format!(
+                            "verify: DRIFT — live {} expected {}",
+                            live_set.len(),
+                            expected_set.len()
+                        ));
+                    }
+                    Response::Verified {
+                        live,
+                        expected,
+                        in_sync,
+                    }
+                }
+                Err(e) => err(format!("verify failed: {e}")),
+            },
         }
     }
 
@@ -334,5 +357,52 @@ mod tests {
                 version: PROTOCOL_VERSION
             }
         );
+    }
+
+    #[test]
+    fn verify_reports_in_sync_when_applier_matches() {
+        let e = Enforcer::new(MockApplier::default(), DEFAULT_MAX_BLOCKED).unwrap();
+        e.handle(Request::Apply {
+            add: vec![ip("8.8.8.8")],
+            remove: vec![],
+        });
+        match e.handle(Request::Verify) {
+            Response::Verified {
+                in_sync,
+                live,
+                expected,
+            } => {
+                assert!(in_sync);
+                assert_eq!(live, vec![ip("8.8.8.8")]);
+                assert_eq!(expected, vec![ip("8.8.8.8")]);
+            }
+            other => panic!("unexpected response: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn verify_detects_drift_when_os_state_diverges() {
+        let e = Enforcer::new(MockApplier::default(), DEFAULT_MAX_BLOCKED).unwrap();
+        e.handle(Request::Apply {
+            add: vec![ip("8.8.8.8"), ip("9.9.9.9")],
+            remove: vec![],
+        });
+        // Simulate an external change the enforcer's own bookkeeping never saw —
+        // someone hand-edited the firewall, or a resync silently failed. Only the
+        // OS-side mirror the applier reads back changes; `blocked()` (what the
+        // enforcer *believes*) is untouched.
+        e.applier.set.lock().unwrap().remove(&ip("9.9.9.9"));
+        match e.handle(Request::Verify) {
+            Response::Verified {
+                in_sync,
+                live,
+                expected,
+            } => {
+                assert!(!in_sync);
+                assert_eq!(live, vec![ip("8.8.8.8")]);
+                assert_eq!(expected, vec![ip("8.8.8.8"), ip("9.9.9.9")]);
+            }
+            other => panic!("unexpected response: {other:?}"),
+        }
     }
 }

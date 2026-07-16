@@ -62,9 +62,9 @@ impl WfwApplier {
     }
 
     /// Run one PowerShell script (no shell string-splitting — the script is a
-    /// single argv entry) and surface stderr on failure.
-    fn ps(&self, script: &str) -> Result<(), String> {
-        let out = Command::new("powershell.exe")
+    /// single argv entry) and hand back the raw process output.
+    fn run_ps(&self, script: &str) -> Result<std::process::Output, String> {
+        Command::new("powershell.exe")
             .args([
                 "-NoProfile",
                 "-NonInteractive",
@@ -74,18 +74,27 @@ impl WfwApplier {
                 script,
             ])
             .output()
-            .map_err(|e| format!("spawning powershell: {e}"))?;
+            .map_err(|e| format!("spawning powershell: {e}"))
+    }
+
+    /// Run a script for effect, surfacing stderr on failure.
+    fn ps(&self, script: &str) -> Result<(), String> {
+        let out = self.run_ps(script)?;
         if out.status.success() {
             Ok(())
         } else {
-            let err = String::from_utf8_lossy(&out.stderr);
-            let err = err.trim();
-            let err = if err.is_empty() {
-                String::from_utf8_lossy(&out.stdout).trim().to_string()
-            } else {
-                err.to_string()
-            };
-            Err(format!("powershell exited {}: {err}", out.status))
+            Err(format!("powershell exited {}: {}", out.status, ps_error(&out)))
+        }
+    }
+
+    /// Run a script and return its stdout, for `verify()` — a live read, not a
+    /// state-changing command.
+    fn ps_query(&self, script: &str) -> Result<String, String> {
+        let out = self.run_ps(script)?;
+        if out.status.success() {
+            Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+        } else {
+            Err(format!("powershell exited {}: {}", out.status, ps_error(&out)))
         }
     }
 
@@ -120,6 +129,44 @@ impl WfwApplier {
 
     fn resync(&self, ips: &BTreeSet<IpAddr>) -> Result<(), String> {
         self.ps(&self.resync_script(ips))
+    }
+
+    /// The read-only script for `verify()`: list every remote address bound to a
+    /// rule in our group, straight from Windows Firewall — not the in-memory
+    /// `mirror`. One address per line of stdout (PowerShell's default pipeline
+    /// formatting for a `string[]` property), which `verify()` parses.
+    fn verify_script(&self) -> String {
+        format!(
+            "$ErrorActionPreference = 'Stop'\n\
+             $rules = @(Get-NetFirewallRule -Group '{GROUP}' -ErrorAction SilentlyContinue)\n\
+             if ($rules.Count -gt 0) {{ $rules | Get-NetFirewallAddressFilter | \
+             Select-Object -ExpandProperty RemoteAddress }}\n"
+        )
+    }
+}
+
+/// Parse `verify_script()`'s stdout (one address per line, plus PowerShell's own
+/// blank-line formatting noise, and `Any` for a rule with no explicit remote
+/// filter) into the addresses actually present. Kept separate from `ps_query` so
+/// the parsing itself is unit-testable without a real PowerShell/Windows Firewall
+/// round trip.
+fn parse_remote_addresses(text: &str) -> Vec<IpAddr> {
+    text.lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.eq_ignore_ascii_case("any"))
+        .filter_map(|l| l.parse::<IpAddr>().ok())
+        .collect()
+}
+
+/// Extract the most useful error text from a failed PowerShell run — stderr when
+/// present, falling back to stdout (some cmdlet errors land there instead).
+fn ps_error(out: &std::process::Output) -> String {
+    let err = String::from_utf8_lossy(&out.stderr);
+    let err = err.trim();
+    if err.is_empty() {
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    } else {
+        err.to_string()
     }
 }
 
@@ -167,6 +214,20 @@ impl Applier for WfwApplier {
         let mut mirror = self.mirror.lock().unwrap();
         mirror.clear();
         self.resync(&mirror)
+    }
+
+    /// Read back what Windows Firewall itself reports for our group — independent
+    /// of `mirror`, which is only ever what *we last told it to be*, not proof it
+    /// stuck (a failed resync could leave `mirror` ahead of reality; an admin or
+    /// another tool could edit the group directly).
+    fn verify(&self) -> Result<Vec<IpAddr>, String> {
+        if self.check_only {
+            // `-WhatIf` mode never wrote anything real; there's nothing live to
+            // read back, matching `NftApplier::verify`'s checking-mode case.
+            return Ok(Vec::new());
+        }
+        let out = self.ps_query(&self.verify_script())?;
+        Ok(parse_remote_addresses(&out))
     }
 }
 
@@ -217,5 +278,38 @@ mod tests {
         let s = a.resync_script(&BTreeSet::new());
         assert!(s.contains("Remove-NetFirewallRule"));
         assert!(!s.contains("New-NetFirewallRule"));
+    }
+
+    #[test]
+    fn verify_script_is_read_only() {
+        let a = WfwApplier::new();
+        let s = a.verify_script();
+        assert!(s.contains("Get-NetFirewallRule -Group 'NETSCOPE Warden'"));
+        assert!(s.contains("Get-NetFirewallAddressFilter"));
+        // Never mutates the firewall — no New/Remove-NetFirewallRule here.
+        assert!(!s.contains("New-NetFirewallRule"));
+        assert!(!s.contains("Remove-NetFirewallRule"));
+    }
+
+    #[test]
+    fn checking_mode_verify_is_always_empty() {
+        // -WhatIf never wrote anything real, so there's nothing to read back —
+        // and critically, this must not shell out to a nonexistent
+        // powershell.exe on a non-Windows test host.
+        assert_eq!(WfwApplier::checking().verify().unwrap(), Vec::<IpAddr>::new());
+    }
+
+    #[test]
+    fn parses_remote_addresses_skips_blank_and_any() {
+        let text = "8.8.8.8\n\nAny\n2001:db8::1\n  9.9.9.9  \n";
+        assert_eq!(
+            parse_remote_addresses(text),
+            vec![ip("8.8.8.8"), ip("2001:db8::1"), ip("9.9.9.9")]
+        );
+    }
+
+    #[test]
+    fn parses_remote_addresses_empty_output() {
+        assert_eq!(parse_remote_addresses(""), Vec::<IpAddr>::new());
     }
 }

@@ -34,6 +34,12 @@ pub enum Request {
     List,
     /// Remove every block (tear the set down).
     Clear,
+    /// Re-read the *actual* OS firewall structure (not the in-memory mirror
+    /// `List` answers from) and compare it to what the enforcer expects to be
+    /// there. Answers "is the firewall really enforcing this, right now" —
+    /// catches drift from an external change (rules wiped by hand, a failed
+    /// resync, Windows Firewall reset) that `List` alone can't see.
+    Verify,
 }
 
 /// Enforcer → agent.
@@ -56,6 +62,14 @@ pub enum Response {
     },
     Cleared {
         removed: usize,
+    },
+    /// The result of a live `Verify`: what's actually in the firewall right
+    /// now (`live`) vs. what the enforcer believes it applied (`expected`).
+    /// `in_sync` is `true` iff the two sets are equal.
+    Verified {
+        live: Vec<IpAddr>,
+        expected: Vec<IpAddr>,
+        in_sync: bool,
     },
     Error {
         message: String,
@@ -141,5 +155,26 @@ mod tests {
         // The wire shape is part of the contract; pin it.
         let j = serde_json::to_string(&Request::List).unwrap();
         assert_eq!(j, r#"{"op":"list"}"#);
+    }
+
+    #[test]
+    fn verify_round_trips() {
+        let req = Request::Verify;
+        let j = serde_json::to_string(&req).unwrap();
+        assert_eq!(j, r#"{"op":"verify"}"#);
+        let mut buf = Vec::new();
+        write_msg(&mut buf, &req).unwrap();
+        let got: Option<Request> = read_msg(&mut buf.as_slice()).unwrap();
+        assert_eq!(got, Some(req));
+
+        let resp = Response::Verified {
+            live: vec!["8.8.8.8".parse().unwrap()],
+            expected: vec!["8.8.8.8".parse().unwrap(), "1.1.1.1".parse().unwrap()],
+            in_sync: false,
+        };
+        let mut buf = Vec::new();
+        write_msg(&mut buf, &resp).unwrap();
+        let got: Option<Response> = read_msg(&mut buf.as_slice()).unwrap();
+        assert_eq!(got, Some(resp));
     }
 }

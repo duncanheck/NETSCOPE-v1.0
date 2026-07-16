@@ -151,6 +151,54 @@ export async function fetchBlocked(agentHttpBase: string): Promise<BlockedState>
   }
 }
 
+// --- Live verification (real-time proof, not just trust) -------------------
+// `/warden/verify` asks the enforcer to re-read the *actual* OS firewall (not
+// its in-memory belief) and compare it to what it expects — see
+// `netscope_enforcer::Applier::verify`. Distinguishing "not installed" (503)
+// from "installed but not responding/erroring" (502, or a network failure) is
+// the point: both used to collapse into the same "unavailable" state, which
+// hid a real operational problem (the enforcer crashed, or was uninstalled
+// mid-run) behind the same UI as "you never set this up".
+export type VerifyState = "ok" | "drift" | "not_configured" | "unreachable";
+
+export interface VerifyResult {
+  state: VerifyState;
+  /** What the firewall itself reports as blocked right now. */
+  live: string[];
+  /** What the enforcer's bookkeeping expects to be blocked. */
+  expected: string[];
+  error: string | null;
+}
+
+/** Ask the enforcer to prove — live, right now — that it's actually enforcing
+ *  what it believes it applied. */
+export async function verifyEnforcement(agentHttpBase: string): Promise<VerifyResult> {
+  try {
+    const res = await fetch(new URL("/warden/verify", agentHttpBase));
+    if (res.status === 503) {
+      return { state: "not_configured", live: [], expected: [], error: null };
+    }
+    if (!res.ok) {
+      const body = (await res.json().catch(() => null)) as { error?: string } | null;
+      return {
+        state: "unreachable",
+        live: [],
+        expected: [],
+        error: body?.error ?? `enforcer request failed (${res.status})`,
+      };
+    }
+    const body = (await res.json()) as { live?: string[]; expected?: string[]; in_sync?: boolean };
+    return {
+      state: body.in_sync ? "ok" : "drift",
+      live: body.live ?? [],
+      expected: body.expected ?? [],
+      error: null,
+    };
+  } catch (e) {
+    return { state: "unreachable", live: [], expected: [], error: `could not reach the agent: ${String(e)}` };
+  }
+}
+
 function toEnforceResult(status: number, body: unknown): EnforceResult {
   const b = (body ?? {}) as Record<string, unknown>;
   if (status === 503) {

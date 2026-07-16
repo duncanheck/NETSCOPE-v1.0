@@ -94,4 +94,10 @@ impl Enforcer {
     pub fn clear(&self) -> Result<Response, String> {
         self.round_trip(&Request::Clear)
     }
+
+    /// Ask the enforcer to prove — right now, from the OS firewall itself, not
+    /// its in-memory bookkeeping — what's actually blocked.
+    pub fn verify(&self) -> Result<Response, String> {
+        self.round_trip(&Request::Verify)
+    }
 }

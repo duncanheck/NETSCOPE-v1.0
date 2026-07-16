@@ -199,6 +199,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/warden/apply", post(warden_apply_handler))
         .route("/warden/blocked", get(warden_blocked_handler))
         .route("/warden/unblock", post(warden_unblock_handler))
+        // Real-time proof (not just the enforcer's belief) that blocking is
+        // actually happening: re-reads the OS firewall itself and flags drift.
+        .route("/warden/verify", get(warden_verify_handler))
         // Setup (G3.2): enable geo/ASN and threat feeds from inside the UI — the
         // agent downloads with the user's own key and hot-reloads, no restart.
         // Loopback-only: setup changes what the agent does, so it's host-only.
@@ -827,6 +830,8 @@ enum EnforceAction {
     },
     List,
     Clear,
+    /// Live proof, not the enforcer's in-memory belief (see `Enforcer::verify`).
+    Verify,
 }
 
 /// The result of trying, distinguishing "no enforcer configured" (the common,
@@ -846,6 +851,7 @@ fn enforce_blocking(action: EnforceAction) -> EnforceOutcome {
         EnforceAction::Apply { add, remove } => enforcer.apply(add, remove),
         EnforceAction::List => enforcer.list(),
         EnforceAction::Clear => enforcer.clear(),
+        EnforceAction::Verify => enforcer.verify(),
     };
     match result {
         Ok(resp) => EnforceOutcome::Done(resp),
@@ -914,6 +920,21 @@ async fn warden_blocked_handler(ConnectInfo(peer): ConnectInfo<SocketAddr>) -> R
         return (StatusCode::FORBIDDEN, "the warden is a local control").into_response();
     }
     let outcome = tokio::task::spawn_blocking(|| enforce_blocking(EnforceAction::List))
+        .await
+        .unwrap_or(EnforceOutcome::Failed("enforce task failed".into()));
+    enforce_response(outcome)
+}
+
+/// `GET /warden/verify` — loopback only. Asks the enforcer to re-read the *actual*
+/// OS firewall state (not its in-memory mirror) and compare it to what it expects
+/// to be there — the "is the Warden really operating correctly, right now" check.
+/// Same NotConfigured(503)/Failed(502) shape as `/warden/blocked`, so the UI can
+/// tell "not installed" apart from "installed but not responding/erroring".
+async fn warden_verify_handler(ConnectInfo(peer): ConnectInfo<SocketAddr>) -> Response {
+    if !peer.ip().is_loopback() {
+        return (StatusCode::FORBIDDEN, "the warden is a local control").into_response();
+    }
+    let outcome = tokio::task::spawn_blocking(|| enforce_blocking(EnforceAction::Verify))
         .await
         .unwrap_or(EnforceOutcome::Failed("enforce task failed".into()));
     enforce_response(outcome)

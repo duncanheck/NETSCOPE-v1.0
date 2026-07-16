@@ -25,6 +25,7 @@ export {
   applyPolicy,
   blockIp,
   unblockAll,
+  verifyEnforcement,
 } from "./warden";
 export type {
   Policy,
@@ -37,6 +38,8 @@ export type {
   ThreatStatus,
   BlockedState,
   EnforceResult,
+  VerifyState,
+  VerifyResult,
 } from "./warden";
 export { setupStatus, setupGeoip, setupThreats } from "./setup";
 export type { SetupStatus, GeoipSetupResult, ThreatsSetupResult } from "./setup";

@@ -92,8 +92,12 @@ injection-proof), E4 the privilege-separated enforcer ✅ (**Linux and Windows**
 hardened `CAP_NET_ADMIN` helper over an `SO_PEERCRED`-authenticated Unix socket, and
 a Windows service over a SID-authenticated named pipe editing its own Windows
 Firewall group; both hold the never-block floor themselves), E6 the blocking UX ✅
-(preview→confirm apply, live blocked list, per-flow block, audit log). E5 reactive
-socket-kill ⬜. Spec: [`planning/WARDEN.md`](planning/WARDEN.md).
+(preview→confirm apply, live blocked list, per-flow block, audit log), E7 real-time
+verification ✅ (a **Warden Mode** switch — one toggle for the default risky-traffic
+policy, one for the threat feed — plus a live status line that re-reads the *actual*
+OS firewall, not the enforcer's belief, every few seconds, so drift from an external
+change is caught and shown, not silently trusted). E5 reactive socket-kill ⬜. Spec:
+[`planning/WARDEN.md`](planning/WARDEN.md).
 
 **Packaging** — beyond the single-exe browser build, a **Tauri desktop app** (native
 window + system tray, agent bundled as a sidecar; [run it](#on-windows--the-native-desktop-app-tauri))
@@ -158,6 +162,15 @@ audits every change to `%ProgramData%\netscope\enforcer.log`, and clears its
 rules when stopped. NETSCOPE detects the service automatically — the block
 panel's enforcement section lights up. Remove it any time with
 `.\uninstall-enforcer.ps1`. Without the service, NETSCOPE stays generate-only.
+
+Once the service is installed, the traffic-blocking panel leads with two switches —
+**Warden Mode** (blocks trackers, plaintext, and unattributable traffic; one confirm
+step, one click to turn back off) and **Threat Feed** (folds the downloaded
+threat-intel indicators into that same block, if you've run the feed downloader) —
+above a live status line that re-reads the actual Windows Firewall group every few
+seconds and says so plainly: verified, drifted, or unreachable. The per-category
+checkboxes, preview, ruleset generator, and per-endpoint blocking still live under
+**advanced controls** for anyone who wants finer-grained rules.
 
 ### On Windows — the single-exe build (portable alternative)
 
